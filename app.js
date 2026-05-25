@@ -3,10 +3,11 @@
    No React, no npm, no build command.
 */
 
-const SUPABASE_URL = "https://uhrtawnxfnwdikwhwkho.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVocnRhd254Zm53ZGlrd2h3a2hvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2MTA3NzEsImV4cCI6MjA5NTE4Njc3MX0.XrqnsHxlQyFxSAfZxRMDc_c7AN968vM_WpjkDMIeUhI";
+// Runtime configuration is loaded from ./config.js (not committed with real values).
+// Supabase anon keys are intended for public clients, but your real security MUST come from strict RLS policies.
+const SUPABASE_URL = window.__APP_CONFIG__?.SUPABASE_URL || "";
+const SUPABASE_ANON_KEY = window.__APP_CONFIG__?.SUPABASE_ANON_KEY || "";
 
-// Replace the anon key above before publishing.
 // This file is intentionally plain JS so it matches your current workflow.
 
 const PLANS = {
@@ -53,12 +54,17 @@ function toast(msg){
   el.classList.add("show");
   setTimeout(()=>el.classList.remove("show"), 1800);
 }
+function handleError(userMessage, error){
+  console.error(userMessage, error);
+  toast(userMessage + (error?.message ? `: ${error.message}` : ""));
+}
+
 function setHash(page){ location.hash = page; }
 function currentHash(){ return (location.hash || "#landing").replace("#","") || "landing"; }
 function esc(v){ return String(v ?? "").replace(/[&<>"']/g, m=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[m])); }
 
 async function init(){
-  if(!supa || SUPABASE_ANON_KEY.includes("PASTE_")){
+  if(!supa || !SUPABASE_URL || !SUPABASE_ANON_KEY){
     $app.innerHTML = setupError();
     return;
   }
@@ -72,7 +78,7 @@ window.addEventListener("hashchange", route);
 
 async function loadTemplates(){
   const { data, error } = await supa.from("business_templates").select("*").eq("is_active", true).order("template_name");
-  if(error) console.warn(error);
+  if(error) console.error("Template load failed", error);
   state.templates = data || [];
 }
 
@@ -125,7 +131,7 @@ function setupError(){
     <div class="auth-card">
       <div class="logo"><span class="logo-mark">B</span>Business OS</div>
       <h1>Setup needed</h1>
-      <p class="help">Open <b>app.js</b> and replace <b>PASTE_YOUR_SUPABASE_ANON_PUBLIC_KEY_HERE</b> with your Supabase anon public key.</p>
+      <p class="help">Create <b>config.js</b> from <b>config.example.js</b> and set <b>window.__APP_CONFIG__.SUPABASE_URL</b> and <b>SUPABASE_ANON_KEY</b>.</p>
     </div>
   </main>`;
 }
@@ -242,7 +248,7 @@ function renderLogin(){
 async function login(ev){
   ev.preventDefault();
   const { error } = await supa.auth.signInWithPassword({ email: loginEmail.value, password: loginPassword.value });
-  if(error) return toast(error.message);
+  if(error) return handleError("Operation failed", error);
   const { data } = await supa.auth.getSession(); state.user = data.session.user; await loadMyBusiness();
   if(!state.business) setHash("onboarding"); else if(state.business.status==="active") setHash("app/home"); else setHash("verification");
 }
@@ -264,7 +270,7 @@ function renderSignup(){
 async function signup(ev){
   ev.preventDefault();
   const { data, error } = await supa.auth.signUp({ email: signupEmail.value, password: signupPassword.value });
-  if(error) return toast(error.message);
+  if(error) return handleError("Operation failed", error);
   if(data.session?.user){ state.user = data.session.user; setHash("onboarding"); }
   else toast("Account created. Please confirm your email then login.");
 }
@@ -311,7 +317,7 @@ async function createWorkspace(ev){
     p_gcash_number: null
   };
   const { data, error } = await supa.rpc("create_business_workspace", payload);
-  if(error) return toast(error.message);
+  if(error) return handleError("Operation failed", error);
   await loadMyBusiness();
   setHash("checkout");
 }
@@ -365,7 +371,7 @@ async function submitPlatformPayment(ev){
     status: "submitted",
     notes: payNotes.value || null
   });
-  if(error) return toast(error.message);
+  if(error) return handleError("Operation failed", error);
   const upd = await supa.from("businesses").update({ status:"under_verification", updated_at:new Date().toISOString() }).eq("id", state.business.id);
   if(upd.error) return toast(upd.error.message);
   await loadMyBusiness();
@@ -482,7 +488,7 @@ const moduleConfig = {
 async function renderSimpleModule(key){
   const cfg = moduleConfig[key];
   const { data, error } = await supa.from(cfg.table).select("*").eq("business_id", state.business.id).order("created_at", { ascending:false }).limit(50);
-  if(error) console.warn(error);
+  if(error) console.error("Template load failed", error);
   dashboardLayout(key, `<div class="section-head"><div><h1 class="h1-small">${cfg.title}</h1><p class="help">Add and view records for this business only.</p></div></div>
     <div class="grid grid-2">
       <div class="card pad"><h3>Add ${cfg.title}</h3>${renderForm(cfg, key)}</div>
@@ -504,7 +510,7 @@ async function saveModule(ev, key){
   }
   if(key==="orders" && !payload.order_number) payload.order_number = "ORD-" + Date.now().toString().slice(-6);
   const { error } = await supa.from(cfg.table).insert(payload);
-  if(error) return toast(error.message);
+  if(error) return handleError("Operation failed", error);
   toast("Saved");
   renderDashboard(key);
 }
@@ -539,7 +545,7 @@ async function saveInvoice(ev){
     status: invoice_status.value,
     notes: invoice_notes.value
   });
-  if(error) return toast(error.message);
+  if(error) return handleError("Operation failed", error);
   toast("Invoice saved"); renderInvoices();
 }
 async function renderReports(){
@@ -566,7 +572,7 @@ async function renderTeam(){
 async function addMember(ev){
   ev.preventDefault();
   const { error } = await supa.from("business_members").insert({ business_id: state.business.id, name:mName.value, email:mEmail.value, role:mRole.value, is_active:true });
-  if(error) return toast(error.message);
+  if(error) return handleError("Operation failed", error);
   toast("Staff added"); renderTeam();
 }
 function allowedTemplatesForBusiness(){
@@ -619,7 +625,7 @@ async function renderSuperAdmin(){
     <div class="section-head"><div><h1 class="h1-small">Platform Control</h1><p class="help">Only you should see this page.</p></div></div>
     <div class="grid grid-2">
       <div class="card pad"><h3>Pending / Under Verification Businesses</h3><div class="table-wrap">${renderBusinessAdminTable(biz.data||[])}</div></div>
-      <div class="card pad"><h3>Owner Backup Center</h3><p class="help">Download customer data backups manually. Daily automatic backup will be a backend Edge Function later.</p><div class="hero-cta"><button class="btn primary" onclick="downloadFullBackup()">Download Full Platform Backup</button><button class="btn" onclick="downloadCSVBackup('businesses')">Export Businesses CSV</button><button class="btn" onclick="downloadCSVBackup('orders')">Export Orders CSV</button></div></div>
+      <div class="card pad"><h3>Owner-Only Backup Center</h3><p class="help">Download customer data backups manually. Daily automatic backup will be a backend Edge Function later.</p><div class="hero-cta"><button class="btn primary" onclick="downloadFullBackup()">Download Full Platform Backup</button><button class="btn" onclick="downloadCSVBackup('businesses')">Export Businesses CSV</button><button class="btn" onclick="downloadCSVBackup('orders')">Export Orders CSV</button></div></div>
     </div>
     <div class="card pad" style="margin-top:14px"><h3>Platform Payments</h3><div class="table-wrap">${renderTable(pays.data||[],["plan_name","amount","status","reference_number","created_at"])}</div></div>
   </div></main></div>`;
@@ -630,17 +636,18 @@ function renderBusinessAdminTable(rows){
 }
 async function approveBusiness(id){
   const { error } = await supa.from("businesses").update({ status:"active", updated_at:new Date().toISOString() }).eq("id",id);
-  if(error) return toast(error.message);
+  if(error) return handleError("Operation failed", error);
   await supa.from("platform_payments").update({ status:"approved", approved_at:new Date().toISOString(), approved_by:state.user.id }).eq("business_id",id).eq("status","submitted");
   toast("Business approved"); renderSuperAdmin();
 }
 async function suspendBusiness(id){
   const { error } = await supa.from("businesses").update({ status:"suspended", updated_at:new Date().toISOString() }).eq("id",id);
-  if(error) return toast(error.message);
+  if(error) return handleError("Operation failed", error);
   toast("Business suspended"); renderSuperAdmin();
 }
 
 // BACKUPS
+// IMPORTANT: Backup visibility in UI is convenience only. Real protection depends on strict RLS and owner-only policies server-side.
 async function fetchAll(table){
   let all=[], from=0, size=1000;
   while(true){
@@ -658,14 +665,14 @@ async function downloadFullBackup(){
     const backup = { exported_at:new Date().toISOString(), tables:{} };
     for(const t of tables) backup.tables[t] = await fetchAll(t);
     downloadFile(`full-platform-backup-${today()}.json`, JSON.stringify(backup,null,2), "application/json");
-  }catch(e){ toast(e.message); }
+  }catch(e){ handleError("Backup export failed", e); }
 }
 async function downloadCSVBackup(table){
   try{
     const rows = await fetchAll(table);
     const csv = toCSV(rows);
     downloadFile(`${table}-backup-${today()}.csv`, csv, "text/csv");
-  }catch(e){ toast(e.message); }
+  }catch(e){ handleError("Backup export failed", e); }
 }
 function toCSV(rows){
   if(!rows.length) return "";
